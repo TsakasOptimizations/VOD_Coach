@@ -231,13 +231,18 @@ context: one or two sentences of game time, gold/kill state, objectives taken an
 }
 
 
-def kits_text(game, kits, p):
-    find = lambda n: next((k for k in kits if n and k.lower() == n.strip().lower()), None)
+def find(kits, name):
+    """Kit key for a typed name, ignoring case ("ahri" -> "Ahri"), else None."""
+    return next((k for k in kits if name and k.lower() == name.strip().lower()), None)
+
+
+def kits_text(game, kits, p, everyone=True):
     fmt = lambda name: "\n".join(f"  {key} - {ab}: {desc}" for key, ab, desc in kits[name]["kit"])
-    mine = find(p["agent"])
+    mine = find(kits, p["agent"])
     out = f"\nThe player's kit ({mine}) - use these exact ability names and keys:\n{fmt(mine)}\n" if mine else ""
     # Valorant: every agent fits in the prompt. League has ~170 champs, so only the lane opponent.
-    others = sorted(k for k in kits if k != mine) if game == "valorant" else [n for n in [find(p.get("opponent"))] if n]
+    others = sorted(k for k in kits if k != mine) if game == "valorant" and everyone else \
+        [n for n in [find(kits, p.get("opponent"))] if n]
     if others:
         out += "\nOther kits, to identify teammate/enemy abilities correctly:\n" + "\n".join(f"{n}:\n{fmt(n)}" for n in others) + "\n"
     return out
@@ -296,7 +301,7 @@ def analyze(path, api_key, models, p, progress):
     total = duration(path)
     progress("Loading abilities...")
     kits = g["kits"]()
-    canon = lambda n: next((k for k in kits if n and k.lower() == n.strip().lower()), n)  # "ahri" -> "Ahri"
+    canon = lambda n: find(kits, n) or n
     p = {**p, "agent": canon(p["agent"]), "opponent": canon(p.get("opponent", ""))}
     if game != "lol":  # role and lane opponent are League-only; the form keeps the last League values around
         p.update(role="", opponent="")
@@ -344,7 +349,7 @@ def analyze(path, api_key, models, p, progress):
         contents=f"""You coached a {g['title']} player ({g['who'](p)}) through a full match. Your notes:
 {json.dumps([{k: m[k] for k in ("category", "severity", "title", "what_happened", "better")} for m in moments])}
 Match flow: {" | ".join(contexts)}
-{kits_text(game, kits, p)}
+{kits_text(game, kits, p, everyone=False)}
 Write an overview, the 3-5 recurring issues that cost them the most {g['summary_unit']} (with concrete drills/habits to fix them), and their strengths.""",
         config=types.GenerateContentConfig(response_mime_type="application/json", response_schema=Summary))
     s = summary.parsed or Summary.model_validate_json(summary.text)

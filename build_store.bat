@@ -2,13 +2,7 @@
 rem Builds dist\VODCoach.msix for the Microsoft Store (the Store signs it on upload).
 rem Before a new Store release: bump VERSION in app.py AND Version="x.y.0.0" in store\AppxManifest.xml.
 cd /d "%~dp0"
-pip install -q -r requirements.txt pyinstaller
-python -m PyInstaller --noconfirm --clean --onedir --windowed --name "VODCoach" ^
-  --icon "%cd%\assets\icon.ico" ^
-  --add-data "%cd%\index.html;." --add-data "%cd%\assets;assets" ^
-  --add-data "%cd%\valorant.json;." --add-data "%cd%\lol.json;." --add-data "%cd%\valorant_ranks.json;." ^
-  --collect-all imageio_ffmpeg --collect-all webview --collect-data tzdata ^
-  --distpath build\store_app --workpath build\store_work --specpath build app.py || exit /b 1
+call "%~dp0build.bat" "--onedir --distpath build\store_app" || exit /b 1
 
 rem Stage the package layout: manifest + tile icons + the app folder
 rmdir /s /q build\msix 2>nul

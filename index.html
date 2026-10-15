@@ -22,10 +22,9 @@
   .cbtn svg { width:22px; height:22px; fill:currentColor; }
   .cbtn span { position:absolute; font:700 11px/1 "Segoe UI", sans-serif; letter-spacing:-.5px; top:50%; left:50%; transform:translate(-50%,-30%); }
   #cBack svg, #cFwd svg { width:28px; height:28px; }
-  #cSpeed { margin-left:auto; }
   #cTime { font:600 13px "Segoe UI", system-ui, sans-serif; font-variant-numeric:tabular-nums; color:var(--text);
            margin:0 10px; white-space:nowrap; } #cTime .dur { color:var(--dim); font-weight:400; }
-  #cSpeed { width:auto; padding:4px 6px; background:transparent; }
+  #cSpeed { margin-left:auto; width:auto; padding:4px 6px; background:transparent; }
   /* Slim sliders: red fill up to --fill, white thumb that grows on hover */
   .slider { -webkit-appearance:none; appearance:none; height:4px; padding:0; border:0; border-radius:2px; cursor:pointer;
             background:linear-gradient(to right, var(--red) var(--fill, 0%), #ffffff2e var(--fill, 0%)); }
@@ -38,8 +37,7 @@
   #cVol { width:0; opacity:0; transition:width .15s, opacity .15s, margin .15s; }
   .volgroup:hover #cVol, .volgroup:focus-within #cVol { width:80px; opacity:1; margin:0 6px; }
   aside { background:var(--panel); border-left:1px solid var(--line); overflow-y:auto; padding:16px; }
-  h1 { margin:0; font-size:20px; letter-spacing:.08em; text-transform:uppercase; }
-  h1 { line-height:0; } .wordmark { height:32px; width:auto; }
+  h1 { margin:0; line-height:0; } .wordmark { height:32px; width:auto; }
   h2 { font-size:13px; letter-spacing:.08em; text-transform:uppercase; color:var(--dim); margin:20px 0 8px; }
   label { display:block; font-size:12px; color:var(--dim); margin:8px 0 3px; }
   option { background:var(--panel); color:var(--text); }
@@ -462,11 +460,10 @@ window.addEventListener("pywebviewready", async () => {
   $("update").title = "You have v" + v.version;
   if (v.store) $("update").parentElement.style.display = "none";  // Store installs update through the Store
   else checkUpdates(true);
-  const ready = setGame(s.game || "valorant");
+  setGame(s.game || "valorant");
   FIELDS.forEach(f => { if (s[f] && f !== "model" && f !== "game") $(f).value = s[f]; });
   if (s.model) setModels([s.model], s.model);  // placeholder until loadModels() fetches the real list
   if (!s.api_key) showKeyCard(); else loadModels();
-  await ready;
 });
 document.querySelectorAll(".gamebtn").forEach(b => b.addEventListener("click", () => {
   if (b.dataset.game === $("game").value) return;
