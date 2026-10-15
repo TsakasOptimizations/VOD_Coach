@@ -1,0 +1,10 @@
+@echo off
+rem Builds dist\VODCoach.exe (one file, no Python needed to run it).
+cd /d "%~dp0"
+pip install -q -r requirements.txt pyinstaller
+python -m PyInstaller --noconfirm --clean --onefile --windowed --name "VODCoach" ^
+  --icon "%cd%\assets\icon.ico" ^
+  --add-data "%cd%\index.html;." --add-data "%cd%\assets;assets" ^
+  --add-data "%cd%\valorant.json;." --add-data "%cd%\lol.json;." --add-data "%cd%\valorant_ranks.json;." ^
+  --collect-all imageio_ffmpeg --collect-all webview --collect-data tzdata ^
+  --distpath dist --workpath build --specpath build app.py

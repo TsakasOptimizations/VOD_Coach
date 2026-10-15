@@ -1,0 +1,4 @@
+pywebview>=6
+google-genai
+imageio-ffmpeg
+tzdata

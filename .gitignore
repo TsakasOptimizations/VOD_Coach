@@ -1,0 +1,10 @@
+*.mp4
+*.mkv
+*.mov
+*.coach.json
+__pycache__/
+dist/
+build/
+.ignore1/
+.ignore2/
+graphify-out/
