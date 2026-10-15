@@ -319,7 +319,7 @@ function render() {
   const filters = sev.map(s => `<label><input type="checkbox" value="${s}" ${!document.querySelector(".filters") || shown.has(s) ? "checked" : ""}>${s}</label>`).join("");
   const keep = document.querySelector(".filters") ? shown : new Set(sev);
   $("report").innerHTML = `
-    <h2>${esc(report.agent)}${report.role ? " " + esc(report.role) : ""} · ${esc(report.rank)}${report.map ? " · " + esc(report.map) : ""}</h2>
+    <h2>${esc(report.agent)}${report.role && report.game === "lol" ? " " + esc(report.role) : ""} · ${esc(report.rank)}${report.map ? " · " + esc(report.map) : ""}</h2>
     <p>${esc(report.overview)}</p>
     <h2>Fix these first</h2>
     <ul>${report.top_issues.map(i => `<li><b>${esc(i.issue)}</b> — ${esc(i.advice)}</li>`).join("")}</ul>

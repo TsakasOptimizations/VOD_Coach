@@ -120,7 +120,7 @@ def generate(client, progress, models, **kw):
             attempt += 1
             if attempt == 6:
                 raise RuntimeError("Gemini is overloaded right now. Try again in a few minutes or pick another coach.")
-            progress(f"Gemini busy, retrying in {15 * attempt}s...")
+            progress("Coach is still watching...")
             time.sleep(15 * attempt)
         except errors.ClientError as e:
             if e.code != 429:
@@ -298,6 +298,8 @@ def analyze(path, api_key, models, p, progress):
     kits = g["kits"]()
     canon = lambda n: next((k for k in kits if n and k.lower() == n.strip().lower()), n)  # "ahri" -> "Ahri"
     p = {**p, "agent": canon(p["agent"]), "opponent": canon(p.get("opponent", ""))}
+    if game != "lol":  # role and lane opponent are League-only; the form keeps the last League values around
+        p.update(role="", opponent="")
     moments, contexts, map_name = [], [], ""
     starts = list(range(0, int(total), SEGMENT_SEC))
     with tempfile.TemporaryDirectory() as tmp:
@@ -307,7 +309,7 @@ def analyze(path, api_key, models, p, progress):
             seg = os.path.join(tmp, f"seg{i}.mp4")
             cut_segment(path, start, SEGMENT_SEC, seg, g["height"])
 
-            progress(f"{tag}: uploading to Gemini...")
+            progress(f"{tag}: uploading VOD to coach...")
             f = client.files.upload(file=seg)
             try:
                 while f.state.name == "PROCESSING":
