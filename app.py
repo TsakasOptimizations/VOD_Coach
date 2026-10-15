@@ -11,6 +11,7 @@ HERE = Path(__file__).parent
 SETTINGS = Path.home() / ".vodcoach.json"
 VERSION = "1.0"  # bump with every GitHub release (tag it v<VERSION>)
 REPO = "TsakasOptimizations/VOD_Coach"
+STORE = "WindowsApps" in sys.executable  # installed from the Microsoft Store: the Store handles updates
 current = {"path": None}
 
 
@@ -64,7 +65,7 @@ class Api:
     _models = []
 
     def version(self):
-        return VERSION
+        return {"version": VERSION, "store": STORE}
 
     def load_settings(self):
         try:

@@ -458,8 +458,10 @@ FIELDS.forEach(f => $(f).addEventListener("input", refresh));
 
 window.addEventListener("pywebviewready", async () => {
   const s = await pywebview.api.load_settings();
-  $("update").title = "You have v" + await pywebview.api.version();
-  checkUpdates(true);
+  const v = await pywebview.api.version();
+  $("update").title = "You have v" + v.version;
+  if (v.store) $("update").parentElement.style.display = "none";  // Store installs update through the Store
+  else checkUpdates(true);
   const ready = setGame(s.game || "valorant");
   FIELDS.forEach(f => { if (s[f] && f !== "model" && f !== "game") $(f).value = s[f]; });
   if (s.model) setModels([s.model], s.model);  // placeholder until loadModels() fetches the real list

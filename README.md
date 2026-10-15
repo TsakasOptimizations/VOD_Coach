@@ -68,6 +68,10 @@ Releasing a new version:
 2. Create a GitHub Release tagged `v1.2` and attach `dist\VODCoach.exe`.
 3. Everyone's **Check for updates** button compares their `VERSION` with the latest release tag.
 
+Microsoft Store package: double-click `build_store.bat`. It creates `dist\VODCoach.msix` (the Store signs it when
+you upload it in Partner Center). Before each Store release, bump `VERSION` in `app.py` and `Version="x.y.0.0"` in
+`store\AppxManifest.xml`. The Store version hides the GitHub update checker, because the Store handles updates.
+
 Ability, champion and rank data comes live from valorant-api.com, Riot's Data Dragon and CommunityDragon, cached in
 `~/.vodcoach_cache/` (the copies in this repo are the offline fallback).
 
