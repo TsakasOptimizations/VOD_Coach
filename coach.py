@@ -104,16 +104,36 @@ def reset_in_seconds():
     return int((datetime.combine(now.date() + timedelta(days=1), datetime.min.time(), PT) - now).total_seconds())
 
 
+# Models Google still lists but refuses ("no longer available to new users"). Remembered so the coach list hides them.
+RETIRED_FILE = Path.home() / ".vodcoach_cache" / "retired_models.json"
+
+
+def retired():
+    try:
+        return set(json.loads(RETIRED_FILE.read_text(encoding="utf-8")))
+    except (OSError, ValueError, TypeError):
+        return set()
+
+
+def retire(model):
+    RETIRED_FILE.parent.mkdir(exist_ok=True)
+    RETIRED_FILE.write_text(json.dumps(sorted(retired() | {model})), encoding="utf-8")
+
+
 def generate(client, progress, models, **kw):
     """generate_content on models[0]. When a model is overloaded, tries the next one right away (it goes to the back of
-    the line); when its daily quota runs out, drops it. Waits out the per-minute limit. models is mutated.
+    the line); when its daily quota runs out or Google has retired it, drops it. Waits out the per-minute limit.
+    models is mutated.
     Progress messages name models by id; the UI swaps in the coach names."""
-    attempt = 0
+    attempt, dropped_retired = 0, False
     while True:
         while models and requests_left(models[0]) == 0:
             models.pop(0)
         if not models:
             h, m = divmod(reset_in_seconds() // 60, 60)
+            if dropped_retired:
+                raise RuntimeError(f"No coach left to use: the others are retired by Google or out of free reviews today "
+                                   f"(those reset in {h}h {m}m, midnight Pacific).")
             raise RuntimeError(f"Daily free limit reached for every coach. It resets in {h}h {m}m (midnight Pacific).")
         try:
             resp = client.models.generate_content(model=models[0], **kw)
@@ -131,6 +151,12 @@ def generate(client, progress, models, **kw):
                 progress("Coach is still watching...")
                 time.sleep(15 * attempt)
         except errors.ClientError as e:
+            if e.code == 404:  # retired model, e.g. gemini-2.5-flash for keys made after its shutdown
+                retire(models[0])
+                progress(f"{models[0]} isn't available anymore, switching to the next coach...")
+                models.pop(0)
+                dropped_retired = True
+                continue
             if e.code != 429:
                 raise
             if "PerDay" in str(e):

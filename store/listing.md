@@ -37,12 +37,7 @@ Requires a Google account to create a free Gemini API key. Free daily limits are
 VOD Coach isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, VALORANT and League of Legends are trademarks or registered trademarks of Riot Games, Inc.
 
 ## What's new in this version
-- Cancel button while a match is being reviewed
-- If a review stops partway, finished parts are kept and the next try continues from there
-- Coloured markers on the video's seek bar for every note: click one to jump there
-- The taskbar icon blinks when your report is ready
-- Estimate of how much time is left, which learns how fast your PC is
-- When a coach is busy, the review switches to the next coach automatically
+- Fixed an error for new users when a coach has been retired by Google: the review now switches to the next coach automatically, and retired coaches are hidden from the list
 
 ## Product features (one per line in Partner Center)
 - AI review of full VALORANT and League of Legends matches

@@ -9,7 +9,7 @@ import coach
 
 HERE = Path(__file__).parent
 SETTINGS = Path.home() / ".vodcoach.json"
-VERSION = "1.3"  # bump with every GitHub release (tag it v<VERSION>)
+VERSION = "1.3.1"  # bump with every GitHub release (tag it v<VERSION>)
 REPO = "TsakasOptimizations/VOD_Coach"
 STORE = "WindowsApps" in sys.executable  # installed from the Microsoft Store: the Store handles updates
 current = {"path": None}
@@ -115,7 +115,7 @@ class Api:
             raise
         except OSError as e:
             raise RuntimeError("Couldn't reach Google. Check your internet connection.") from e
-        flash = [n for n in names if re.fullmatch(r"gemini-\d+(\.\d+)?-flash", n)]
+        flash = [n for n in names if re.fullmatch(r"gemini-\d+(\.\d+)?-flash", n) and n not in coach.retired()]
         self._models = sorted(flash, key=lambda n: -float(n.split("-")[1]))
         return self._models
 
