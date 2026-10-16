@@ -1,10 +1,10 @@
 # VOD Coach Privacy Policy
 
-_Last updated: October 16, 2026_
+_Last updated: October 16, 2026 (bug reports)_
 
 VOD Coach is a free desktop app that reviews your VALORANT and League of Legends match recordings with Google Gemini.
-The developer (TsakasTweaks) does not run any servers, does not have user accounts, and does not collect, receive or
-sell any of your data. There are no ads and no analytics.
+The developer (TsakasTweaks) does not run any servers, does not have user accounts, and does not collect or sell any of your data, and only
+receives a bug report if you choose to send one. There are no ads and no analytics.
 
 ## What stays on your PC
 
@@ -38,6 +38,11 @@ reviewers may read it. Don't analyze recordings that contain anything you wouldn
 **Game data services.** To show agent/champion abilities, icons and ranks, the app downloads public data from
 [valorant-api.com](https://valorant-api.com), Riot Games' Data Dragon (ddragon.leagueoflegends.com) and
 CommunityDragon (raw.communitydragon.org). Only standard web requests are made; no personal data is sent.
+
+**Bug reports (only when you click "Send report").** If the app hits an unexpected error, it offers to send a bug
+report to the developer's private Discord channel. Nothing is sent unless you click **Send report**. It contains the app version, your Windows version, the game and coach
+you picked, the error details, and anything you type in the "What were you doing?" box. Your API key is removed, and
+your Windows user name is removed from file paths. Videos and coaching reports are never included.
 
 **Update check (GitHub download only).** The version downloaded from GitHub asks the GitHub API whether a newer
 version exists. The Microsoft Store version does not do this; the Store handles updates.

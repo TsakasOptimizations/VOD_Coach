@@ -63,10 +63,12 @@
   #prog #cancel { padding:4px 10px; font-size:11px; }
   #pct { font-size:12px; color:var(--dim); font-variant-numeric:tabular-nums; white-space:nowrap; }
   .bar button { white-space:nowrap; }
-  #updDialog { background:var(--panel); color:var(--text); border:1px solid var(--red); border-radius:8px; padding:20px;
-               max-width:420px; box-shadow:0 20px 60px #000a; }
-  #updDialog::backdrop { background:#0009; }
-  #updDialog p { color:var(--dim); margin:10px 0 16px; } #updDialog p b { color:var(--text); }
+  dialog { background:var(--panel); color:var(--text); border:1px solid var(--red); border-radius:8px; padding:20px;
+           max-width:420px; box-shadow:0 20px 60px #000a; }
+  dialog::backdrop { background:#0009; }
+  dialog p { color:var(--dim); margin:10px 0 16px; } dialog p b { color:var(--text); }
+  #bugDialog { max-width:480px; }
+  #bugMsg { margin:10px 0; min-height:1em; } #bugMsg.ok { color:var(--good); } #bugMsg.bad { color:var(--critical); }
   .upd { margin-left:auto; display:flex; align-items:center; gap:10px; font-size:12px; color:var(--dim); }
   .upd .new { color:var(--good); } .upd .bad { color:var(--critical); }
   .upd .link { margin:0; font-size:12px; color:var(--good); }
@@ -213,6 +215,16 @@
   <h2 id="updTitle" class="cardtitle">Update available</h2>
   <p id="updText"></p>
   <div class="bar"><button id="updGet">Download update</button><button class="ghost" id="updLater">Later</button></div>
+</dialog>
+
+<dialog id="bugDialog" aria-labelledby="bugTitle">
+  <h2 id="bugTitle" class="cardtitle">You encountered a bug</h2>
+  <p>Sorry about that. Send a report so it can get fixed. It includes the app version and error details,
+    never your API key or your videos.</p>
+  <label for="bugNote">What were you doing? (optional)</label>
+  <textarea id="bugNote" rows="2" placeholder="e.g. analyzing a League game, it stopped at part 2"></textarea>
+  <p id="bugMsg" role="status"></p>
+  <div class="bar"><button id="bugSend">Send report</button><button class="ghost" id="bugClose">Close</button></div>
 </dialog>
 
 <script>
@@ -426,6 +438,7 @@ $("report").addEventListener("change", e => e.target.closest(".filters") && rend
 $("open").onclick = async () => {
   const v = await pywebview.api.open_video();
   if (!v) return;
+  if (v.error) { $("status").textContent = v.error; return; }
   $("player").src = v.url; $("name").textContent = v.name; videoSeconds = v.seconds; updateQuota();
   videoOpen = true; report = v.report;
   if (report) {
@@ -458,8 +471,38 @@ $("analyze").onclick = async () => {
   const resume = res.resume ? " Finished parts are saved: click Analyze match to continue from there." : "";
   if (res.cancelled) { $("status").textContent = "Cancelled." + resume; return; }
   if (res.error) { $("status").textContent = res.error + resume; return; }
+  if (res.bug) { $("status").textContent = "Something went wrong." + resume; showBug(); return; }
   $("status").textContent = ""; report = res.report; render();
 };
+
+// --- Bug reports: unexpected errors (not limits or a busy Gemini) open a popup that can send them to the developer
+async function showBug() {
+  if ($("bugDialog").open) return;
+  const b = await pywebview.api.bug_report();
+  $("bugNote").value = "";
+  $("bugMsg").textContent = b.can_send ? "" : "Reporting isn't set up in this copy of the app.";
+  $("bugMsg").className = "";
+  $("bugSend").hidden = !b.can_send; $("bugSend").disabled = false;
+  $("bugDialog").showModal();
+}
+$("bugSend").onclick = async () => {
+  $("bugSend").disabled = true; $("bugMsg").className = ""; $("bugMsg").textContent = "Sending...";
+  try {
+    await pywebview.api.send_report($("bugNote").value);
+    $("bugMsg").className = "ok"; $("bugMsg").textContent = "Thanks! Report sent.";
+  } catch (e) {
+    $("bugSend").disabled = false; $("bugMsg").className = "bad"; $("bugMsg").textContent = e.message || String(e);
+  }
+};
+$("bugClose").onclick = () => $("bugDialog").close();
+let reportingJs = false;  // never report an error raised while reporting one
+async function jsBug(msg, stack) {
+  if (reportingJs || !window.pywebview?.api?.report_js_error) return;
+  reportingJs = true;
+  try { await pywebview.api.report_js_error(`${msg}\n${stack || ""}`); await showBug(); } catch {} finally { reportingJs = false; }
+}
+addEventListener("error", e => jsBug(e.message, e.error?.stack));
+addEventListener("unhandledrejection", e => jsBug(e.reason?.message || String(e.reason), e.reason?.stack));
 
 let keyTimer;
 $("api_key").addEventListener("input", () => {  // check as soon as they paste, no button needed

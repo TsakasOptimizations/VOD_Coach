@@ -1,5 +1,5 @@
 """VOD Coach desktop app: pywebview window + tiny local server so the HTML player can seek the VOD."""
-import json, os, re, sys, threading, time, traceback, webbrowser
+import json, os, platform, re, sys, threading, time, traceback, urllib.request, webbrowser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -13,6 +13,20 @@ VERSION = "1.3.1"  # bump with every GitHub release (tag it v<VERSION>)
 REPO = "TsakasOptimizations/VOD_Coach"
 STORE = "WindowsApps" in sys.executable  # installed from the Microsoft Store: the Store handles updates
 current = {"path": None}
+# Discord webhook that bug reports go to. Git-ignored (the repo is public), so only builds made with the file have it.
+WEBHOOK_FILE = HERE / "report_webhook.txt"
+
+
+def scrub(text, api_key=""):
+    """Strip what must never leave the PC: the API key and the Windows username (it's in every path)."""
+    text = re.sub(r"AIza[0-9A-Za-z_-]{20,}", "<key>", text.replace(api_key, "<key>") if api_key else text)
+    home = str(Path.home())
+    for h in (home, home.replace("\\", "/"), home.replace("\\", "\\\\")):
+        text = re.sub(re.escape(h), "~", text, flags=re.I)
+    user = Path.home().name
+    if len(user) >= 3:  # the name can show up on its own too (temp folder names, OneDrive paths)
+        text = re.sub(rf"(?<![A-Za-z0-9]){re.escape(user)}(?![A-Za-z0-9])", "<user>", text, flags=re.I)
+    return text
 
 
 class VideoHandler(SimpleHTTPRequestHandler):
@@ -84,6 +98,31 @@ def flash_taskbar():
 class Api:
     _status = {}
     _models = []
+    _bug = ""  # the last bug's details, exactly as they'd be sent
+
+    def _record_bug(self, where, details):
+        s = self.load_settings()
+        self._bug = scrub(f"VOD Coach {VERSION} ({'Store' if STORE else 'GitHub'}) on {platform.platform()}\n"
+                          f"Game: {s.get('game', '?')} · coach: {s.get('model', '?')} · where: {where}\n\n{details}",
+                          s.get("api_key", ""))
+
+    def report_js_error(self, details):
+        self._record_bug("app window", details)
+
+    def bug_report(self):  # the details stay on the Python side: only Send report ships them, straight to Discord
+        return {"can_send": WEBHOOK_FILE.exists()}
+
+    def send_report(self, note):
+        note = scrub(note.strip()[:400], self.load_settings().get("api_key", ""))
+        head = f"**What they were doing:** {note}\n" if note else ""
+        body = self._bug[-(1900 - len(head)):]  # Discord caps a message at 2000 chars; the end of a traceback matters most
+        req = urllib.request.Request(WEBHOOK_FILE.read_text(encoding="utf-8").strip(),
+                                     data=json.dumps({"username": "VOD Coach bug report", "content": f"{head}```\n{body}\n```"}).encode(),
+                                     headers={"Content-Type": "application/json", "User-Agent": f"VODCoach/{VERSION}"})
+        try:
+            urllib.request.urlopen(req, timeout=15)
+        except OSError as e:
+            raise RuntimeError("Couldn't send the report. Check your internet connection and try again.") from e
 
     def version(self):
         return {"version": VERSION, "store": STORE}
@@ -163,7 +202,10 @@ class Api:
         current["path"] = res[0]
         rp = report_path(res[0])
         report = json.loads(Path(rp).read_text(encoding="utf-8")) if os.path.exists(rp) else None
-        current["seconds"] = coach.duration(res[0])
+        try:
+            current["seconds"] = coach.duration(res[0])
+        except coach.CoachError as e:
+            return {"error": str(e)}
         return {"name": os.path.basename(res[0]), "seconds": current["seconds"], "url": f"http://127.0.0.1:{server.server_port}/v?{os.path.getmtime(res[0])}",
                 "report": report}
 
@@ -211,9 +253,12 @@ class Api:
                 out["report"] = report
             except Cancelled:
                 pass
-            except Exception as e:
+            except coach.CoachError as e:  # limits, Gemini busy...: the message says what to do
+                out["error"] = str(e)
+            except Exception:
                 traceback.print_exc()
-                out["error"] = f"{type(e).__name__}: {e}"
+                self._record_bug(f"analyzing ({self._status.get('msg', 'starting')})", traceback.format_exc())
+                out["bug"] = True
             finally:
                 done.set()
 

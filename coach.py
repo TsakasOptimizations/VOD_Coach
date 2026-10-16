@@ -12,6 +12,11 @@ from google.genai import errors, types
 from pydantic import BaseModel
 
 FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
+
+
+class CoachError(RuntimeError):
+    """A problem the player can act on (limits, Gemini busy, not a video). Shown as is; anything else is a bug."""
+
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # the windowed .exe would otherwise flash a console for ffmpeg
 HERE = Path(__file__).parent
 # Low media resolution = ~100 tokens per video second, so a 25 min part is ~160k tokens: under the free 250k tokens/minute.
@@ -50,7 +55,7 @@ def duration(path):
     out = subprocess.run([FFMPEG, "-i", path], capture_output=True, text=True, errors="ignore", creationflags=NO_WINDOW).stderr
     m = re.search(r"Duration: (\d+):(\d+):([\d.]+)", out)
     if not m:
-        raise ValueError("Could not read video duration - is this a video file?")
+        raise CoachError("Couldn't read this video. Is it a video file?")
     h, mi, s = m.groups()
     return int(h) * 3600 + int(mi) * 60 + float(s)
 
@@ -132,9 +137,9 @@ def generate(client, progress, models, **kw):
         if not models:
             h, m = divmod(reset_in_seconds() // 60, 60)
             if dropped_retired:
-                raise RuntimeError(f"No coach left to use: the others are retired by Google or out of free reviews today "
+                raise CoachError(f"No coach left to use: the others are retired by Google or out of free reviews today "
                                    f"(those reset in {h}h {m}m, midnight Pacific).")
-            raise RuntimeError(f"Daily free limit reached for every coach. It resets in {h}h {m}m (midnight Pacific).")
+            raise CoachError(f"Daily free limit reached for every coach. It resets in {h}h {m}m (midnight Pacific).")
         try:
             resp = client.models.generate_content(model=models[0], **kw)
             _bump(models[0], 1)
@@ -142,7 +147,7 @@ def generate(client, progress, models, **kw):
         except (errors.ServerError, httpx.TransportError):  # Google overloaded, or the connection dropped / timed out
             attempt += 1
             if attempt >= max(6, 2 * len(models)):  # every coach failed twice (or one coach 6 times)
-                raise RuntimeError("Gemini is overloaded right now. Try again in a few minutes.")
+                raise CoachError("Gemini is overloaded right now. Try again in a few minutes.")
             if len(models) > 1:
                 progress(f"{models[0]} is busy, switching to {models[1]}...")
                 models.append(models.pop(0))
@@ -415,7 +420,7 @@ def analyze(path, api_key, models, p, progress):
                     time.sleep(3)
                     f = client.files.get(name=f.name)
                 if f.state.name != "ACTIVE":
-                    raise RuntimeError(f"Gemini could not process the video ({f.state.name})")
+                    raise CoachError(f"The coach couldn't read this video ({f.state.name}). Try re-saving it as MP4.")
                 t0 = timed(i, "upload")
 
                 progress(f"{tag}: coach is watching...", span(i, .25, 1), left(i, "watch"))
