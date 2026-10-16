@@ -146,15 +146,18 @@ def generate(client, progress, models, **kw):
             return resp
         except (errors.ServerError, httpx.TransportError):  # Google overloaded, or the connection dropped / timed out
             attempt += 1
-            if attempt >= max(6, 2 * len(models)):  # every coach failed twice (or one coach 6 times)
-                raise CoachError("Gemini is overloaded right now. Try again in a few minutes.")
+            if attempt == 1:
+                give_up = time.time() + 5 * 60  # overload spells often last a few minutes: ride them out
+            if time.time() > give_up:
+                raise CoachError("All coaches are overloaded right now. Try again in a few minutes "
+                                 "(the parts already reviewed are saved).")
+            wait = min(5 * attempt, 60)
             if len(models) > 1:
                 progress(f"{models[0]} is busy, switching to {models[1]}...")
                 models.append(models.pop(0))
-                time.sleep(5)
             else:
-                progress("Coach is still watching...")
-                time.sleep(15 * attempt)
+                progress(f"Coach is busy, retrying in {wait}s...")
+            time.sleep(wait)
         except errors.ClientError as e:
             if e.code == 404:  # retired model, e.g. gemini-2.5-flash for keys made after its shutdown
                 retire(models[0])

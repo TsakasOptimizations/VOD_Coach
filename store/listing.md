@@ -37,7 +37,8 @@ Requires a Google account to create a free Gemini API key. Free daily limits are
 VOD Coach isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, VALORANT and League of Legends are trademarks or registered trademarks of Riot Games, Inc.
 
 ## What's new in this version
-- Fixed an error for new users when a coach has been retired by Google: the review now switches to the next coach automatically, and retired coaches are hidden from the list
+- When the coaches are busy, the review now keeps retrying for a few minutes and switches coaches instead of stopping right away
+- New: if something goes wrong, you can send a bug report with one click
 
 ## Product features (one per line in Partner Center)
 - AI review of full VALORANT and League of Legends matches
