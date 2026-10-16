@@ -1,5 +1,5 @@
 """VOD Coach desktop app: pywebview window + tiny local server so the HTML player can seek the VOD."""
-import json, os, re, sys, threading, traceback, webbrowser
+import json, os, re, sys, threading, time, traceback, webbrowser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -9,7 +9,7 @@ import coach
 
 HERE = Path(__file__).parent
 SETTINGS = Path.home() / ".vodcoach.json"
-VERSION = "1.1"  # bump with every GitHub release (tag it v<VERSION>)
+VERSION = "1.2"  # bump with every GitHub release (tag it v<VERSION>)
 REPO = "TsakasOptimizations/VOD_Coach"
 STORE = "WindowsApps" in sys.executable  # installed from the Microsoft Store: the Store handles updates
 current = {"path": None}
@@ -61,7 +61,7 @@ def report_path(video):
 
 
 class Api:
-    _status = ""
+    _status = {}
     _models = []
 
     def version(self):
@@ -169,15 +169,18 @@ class Api:
 
     def analyze(self, s):
         path = current["path"]
+
+        def progress(msg, span=None):  # span: this step's share of the job, "since" lets the bar creep through it
+            self._status = {**self._status, "msg": msg, **({"from": span[0], "to": span[1], "since": time.time()} if span else {})}
         try:
-            report = coach.analyze(path, s["api_key"], [s["model"]] + [m for m in self._models if m != s["model"]], s, lambda msg: setattr(self, "_status", msg))
+            report = coach.analyze(path, s["api_key"], [s["model"]] + [m for m in self._models if m != s["model"]], s, progress)
             Path(report_path(path)).write_text(json.dumps(report, indent=1), encoding="utf-8")
             return {"report": report}
         except Exception as e:
             traceback.print_exc()
             return {"error": f"{type(e).__name__}: {e}"}
         finally:
-            self._status = ""
+            self._status = {}
 
 
 if __name__ == "__main__":

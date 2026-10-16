@@ -37,7 +37,11 @@ Requires a Google account to create a free Gemini API key. Free daily limits are
 VOD Coach isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, VALORANT and League of Legends are trademarks or registered trademarks of Riot Games, Inc.
 
 ## What's new in this version
-First release of VOD Coach.
+- Progress bar with a running timer while the coach reviews your match
+- Fixed the review sometimes getting stuck on "coach is watching"
+- No more command window popping up when you analyze a match
+- Fixed VALORANT reports showing a League of Legends role
+- Clearer progress messages
 
 ## Product features (one per line in Partner Center)
 - AI review of full VALORANT and League of Legends matches

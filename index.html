@@ -50,6 +50,10 @@
   button:disabled { opacity:.45; cursor:default; }
   .bar { display:flex; gap:10px; align-items:center; }
   #status { color:var(--minor); font-size:13px; }
+  #prog { display:flex; align-items:center; gap:10px; margin-top:10px; } #prog[hidden] { display:none; }
+  .pbar { flex:1; height:6px; background:var(--line); border-radius:3px; overflow:hidden; }
+  #pfill { height:100%; background:var(--red); transform:scaleX(0); transform-origin:left; transition:transform 1s linear; }
+  #pct { font-size:12px; color:var(--dim); font-variant-numeric:tabular-nums; white-space:nowrap; }
   .bar button { white-space:nowrap; }
   #updDialog { background:var(--panel); color:var(--text); border:1px solid var(--red); border-radius:8px; padding:20px;
                max-width:420px; box-shadow:0 20px 60px #000a; }
@@ -189,6 +193,7 @@
     <button id="analyze" disabled>Analyze match</button>
     <span id="status"></span>
   </div>
+  <div id="prog" hidden><div class="pbar" role="progressbar" aria-label="Analysis progress"><div id="pfill"></div></div><span id="pct"></span></div>
   <p id="quota"></p>
 
   <div id="report"><p class="empty">Open a VOD to get started.</p></div>
@@ -413,9 +418,19 @@ $("analyze").onclick = async () => {
   const s = settings();
   pywebview.api.save_settings(s);
   $("analyze").disabled = $("open").disabled = true;
-  const poll = setInterval(async () => $("status").textContent = await pywebview.api.get_status(), 1000);
+  // Gemini can't report its own progress, so within a step the bar creeps toward the step's end but never past it.
+  // The ticking elapsed time is the real "still alive" signal.
+  const t0 = Date.now();
+  $("pfill").style.transform = "scaleX(0)"; $("prog").hidden = false;
+  const poll = setInterval(async () => {
+    const st = await pywebview.api.get_status();
+    $("status").textContent = st.msg || "";
+    const p = st.to ? st.from + (st.to - st.from) * (1 - Math.exp(-(Date.now() / 1000 - st.since) / 60)) : 0;
+    $("pfill").style.transform = `scaleX(${p})`;
+    $("pct").textContent = `${Math.floor(p * 100)}% · ${fmt((Date.now() - t0) / 1000)}`;
+  }, 1000);
   const res = await pywebview.api.analyze(s);
-  clearInterval(poll); updateQuota();
+  clearInterval(poll); $("prog").hidden = true; updateQuota();
   $("open").disabled = false; refresh();
   if (res.error) { $("status").textContent = res.error; return; }
   $("status").textContent = ""; report = res.report; render();

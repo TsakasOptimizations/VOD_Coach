@@ -17,6 +17,10 @@ specific to your agent or champion, your rank, and even your lane opponent.
 
 ## Download
 
+**Easiest:** get it from the **[Microsoft Store](https://apps.microsoft.com/detail/9NMR0N7KMRX6)**. It installs like any
+other app and updates itself.
+
+Or download the .exe:
 1. Go to the **[Releases](https://github.com/TsakasOptimizations/VOD_Coach/releases/latest)** page.
 2. Under **Assets**, download **`VODCoach.exe`**.
 3. Double-click it. No install and no Python needed.

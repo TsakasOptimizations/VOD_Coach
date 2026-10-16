@@ -5,12 +5,14 @@ from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Literal, Optional
 
+import httpx
 import imageio_ffmpeg
 from google import genai
 from google.genai import errors, types
 from pydantic import BaseModel
 
 FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # the windowed .exe would otherwise flash a console for ffmpeg
 HERE = Path(__file__).parent
 # Low media resolution = ~100 tokens per video second, so a 25 min part is ~160k tokens: under the free 250k tokens/minute.
 SEGMENT_SEC = 25 * 60
@@ -45,7 +47,7 @@ class Summary(BaseModel):
 
 
 def duration(path):
-    out = subprocess.run([FFMPEG, "-i", path], capture_output=True, text=True, errors="ignore").stderr
+    out = subprocess.run([FFMPEG, "-i", path], capture_output=True, text=True, errors="ignore", creationflags=NO_WINDOW).stderr
     m = re.search(r"Duration: (\d+):(\d+):([\d.]+)", out)
     if not m:
         raise ValueError("Could not read video duration - is this a video file?")
@@ -64,7 +66,7 @@ def cut_segment(src, start, length, dst, height):
     # Low fps keeps uploads small; Gemini only samples 1 fps anyway. Audio kept for footsteps/comms/pings.
     subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ss", str(start), "-t", str(length), "-i", src,
                     "-vf", f"scale=-2:{height},fps=5", "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
-                    "-c:a", "aac", "-b:a", "64k", dst], check=True)
+                    "-c:a", "aac", "-b:a", "64k", dst], check=True, creationflags=NO_WINDOW)
 
 
 # --- Free-tier quota tracking. Google has no API for "requests left", so we count our own requests per Pacific day
@@ -116,7 +118,7 @@ def generate(client, progress, models, **kw):
             resp = client.models.generate_content(model=models[0], **kw)
             _bump(models[0], 1)
             return resp
-        except errors.ServerError:
+        except (errors.ServerError, httpx.TransportError):  # Google overloaded, or the connection dropped / timed out
             attempt += 1
             if attempt == 6:
                 raise RuntimeError("Gemini is overloaded right now. Try again in a few minutes or pick another coach.")
@@ -294,10 +296,12 @@ Only report what you can actually see; don't invent events."""
 
 def analyze(path, api_key, models, p, progress):
     """models: chosen model first, then fallbacks for when its daily quota runs out.
-    p: {game, agent, rank, focus, role?, opponent?} - agent is the champion for League."""
+    p: {game, agent, rank, focus, role?, opponent?} - agent is the champion for League.
+    progress(msg, span=None): span = (start, end) share of the whole job (0..1) the step covers."""
     models = list(models)
     game, g = p["game"], GAMES[p["game"]]
-    client = genai.Client(api_key=api_key)
+    # Without a timeout a dropped connection waits forever. 10 min (ms) is far above a normal reply for a 25 min part.
+    client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=10 * 60 * 1000))
     total = duration(path)
     progress("Loading abilities...")
     kits = g["kits"]()
@@ -307,14 +311,16 @@ def analyze(path, api_key, models, p, progress):
         p.update(role="", opponent="")
     moments, contexts, map_name = [], [], ""
     starts = list(range(0, int(total), SEGMENT_SEC))
+    units = len(starts) + 0.15  # each part is 1 unit (mostly the watching), the summary is a small extra step
+    span = lambda i, a, b: ((i + a) / units, (i + b) / units)
     with tempfile.TemporaryDirectory() as tmp:
         for i, start in enumerate(starts):
             tag = f"Part {i + 1}/{len(starts)}"
-            progress(f"{tag}: compressing video...")
+            progress(f"{tag}: compressing video...", span(i, 0, .1))
             seg = os.path.join(tmp, f"seg{i}.mp4")
             cut_segment(path, start, SEGMENT_SEC, seg, g["height"])
 
-            progress(f"{tag}: uploading VOD to coach...")
+            progress(f"{tag}: uploading VOD to coach...", span(i, .1, .25))
             f = client.files.upload(file=seg)
             try:
                 while f.state.name == "PROCESSING":
@@ -323,7 +329,7 @@ def analyze(path, api_key, models, p, progress):
                 if f.state.name != "ACTIVE":
                     raise RuntimeError(f"Gemini could not process the video ({f.state.name})")
 
-                progress(f"{tag}: coach is watching...")
+                progress(f"{tag}: coach is watching...", span(i, .25, 1))
                 resp = generate(client, progress, models,
                                 contents=[f, prompt(game, p, start, contexts[-1] if contexts else "", kits)],
                                 config=types.GenerateContentConfig(response_mime_type="application/json",
@@ -343,7 +349,7 @@ def analyze(path, api_key, models, p, progress):
                 d["seconds"] = start + to_seconds(m.time)
                 moments.append(d)
 
-    progress("Writing summary...")
+    progress("Writing summary...", span(len(starts), 0, .15))
     summary = generate(
         client, progress, models,
         contents=f"""You coached a {g['title']} player ({g['who'](p)}) through a full match. Your notes:
