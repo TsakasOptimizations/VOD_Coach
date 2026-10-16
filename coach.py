@@ -105,8 +105,9 @@ def reset_in_seconds():
 
 
 def generate(client, progress, models, **kw):
-    """generate_content on models[0]. Retries while Google is overloaded or the per-minute limit is hit;
-    when a model's daily quota runs out, moves on to the next model in the list (models is mutated)."""
+    """generate_content on models[0]. When a model is overloaded, tries the next one right away (it goes to the back of
+    the line); when its daily quota runs out, drops it. Waits out the per-minute limit. models is mutated.
+    Progress messages name models by id; the UI swaps in the coach names."""
     attempt = 0
     while True:
         while models and requests_left(models[0]) == 0:
@@ -120,16 +121,21 @@ def generate(client, progress, models, **kw):
             return resp
         except (errors.ServerError, httpx.TransportError):  # Google overloaded, or the connection dropped / timed out
             attempt += 1
-            if attempt == 6:
-                raise RuntimeError("Gemini is overloaded right now. Try again in a few minutes or pick another coach.")
-            progress("Coach is still watching...")
-            time.sleep(15 * attempt)
+            if attempt >= max(6, 2 * len(models)):  # every coach failed twice (or one coach 6 times)
+                raise RuntimeError("Gemini is overloaded right now. Try again in a few minutes.")
+            if len(models) > 1:
+                progress(f"{models[0]} is busy, switching to {models[1]}...")
+                models.append(models.pop(0))
+                time.sleep(5)
+            else:
+                progress("Coach is still watching...")
+                time.sleep(15 * attempt)
         except errors.ClientError as e:
             if e.code != 429:
                 raise
             if "PerDay" in str(e):
                 _bump(models[0])  # used up today, even if we didn't count it all ourselves
-                progress("This coach hit its daily free limit, switching to the next coach...")
+                progress(f"{models[0]} hit its daily free limit, switching to the next coach...")
             else:
                 progress("Per-minute limit hit, waiting 60s...")
                 time.sleep(60)
@@ -294,10 +300,41 @@ Include clear good plays too (severity "good", category "good_play") so they kno
 Only report what you can actually see; don't invent events."""
 
 
+def partial_path(video):
+    return video + ".coach.partial.json"
+
+
+# "Time left" estimate: how long each step takes, learned from this PC's past reviews. compress/upload/watch are
+# seconds per second of video (your CPU / your internet / Gemini), summary is plain seconds.
+TIMING_FILE = CACHE_DIR / "timing.json"
+STEPS = ("compress", "upload", "watch")
+GUESS = {"compress": .05, "upload": .02, "watch": .3, "summary": 30}  # until measured: ~9 min per 25 min part
+
+
+def load_speed():
+    """(speeds, which of them were measured on this PC)"""
+    try:
+        saved = {k: float(v) for k, v in json.loads(TIMING_FILE.read_text(encoding="utf-8")).items() if k in GUESS}
+    except (OSError, ValueError, TypeError, AttributeError):
+        saved = {}
+    return GUESS | saved, set(saved)
+
+
+def save_speed(measured):
+    """Blend new measurements into the saved ones (a first measurement replaces the guess outright)."""
+    speed, known = load_speed()
+    for k, v in measured.items():
+        speed[k] = round(.5 * speed[k] + .5 * v if k in known else v, 6)
+    CACHE_DIR.mkdir(exist_ok=True)
+    TIMING_FILE.write_text(json.dumps({k: speed[k] for k in known | set(measured)}), encoding="utf-8")  # never save a guess
+
+
 def analyze(path, api_key, models, p, progress):
     """models: chosen model first, then fallbacks for when its daily quota runs out.
     p: {game, agent, rank, focus, role?, opponent?} - agent is the champion for League.
-    progress(msg, span=None): span = (start, end) share of the whole job (0..1) the step covers."""
+    progress(msg, span=None, left=None): span = (start, end) share of the whole job (0..1) the step covers,
+    left = estimated seconds until the report is done. progress may raise to cancel.
+    Finished parts are saved next to the video, so a failed or cancelled review resumes where it stopped."""
     models = list(models)
     game, g = p["game"], GAMES[p["game"]]
     # Without a timeout a dropped connection waits forever. 10 min (ms) is far above a normal reply for a 25 min part.
@@ -309,18 +346,43 @@ def analyze(path, api_key, models, p, progress):
     p = {**p, "agent": canon(p["agent"]), "opponent": canon(p.get("opponent", ""))}
     if game != "lol":  # role and lane opponent are League-only; the form keeps the last League values around
         p.update(role="", opponent="")
-    moments, contexts, map_name = [], [], ""
     starts = list(range(0, int(total), SEGMENT_SEC))
     units = len(starts) + 0.15  # each part is 1 unit (mostly the watching), the summary is a small extra step
     span = lambda i, a, b: ((i + a) / units, (i + b) / units)
+
+    # Same settings as a saved unfinished review of this video? Then keep its finished parts.
+    key = {k: p.get(k, "") for k in ("game", "agent", "rank", "role", "opponent", "focus")} | {"segment": SEGMENT_SEC}
+    try:
+        saved = json.loads(Path(partial_path(path)).read_text(encoding="utf-8"))
+        parts = saved["parts"] if saved["key"] == key else []
+    except (OSError, ValueError, KeyError, TypeError):
+        parts = []
+
+    speed, _ = load_speed()
+    lens = [min(SEGMENT_SEC, total - st) for st in starts]
+
+    def left(i, step="compress"):  # seconds until the report is done, from the start of `step` in part i
+        rest = speed["summary"] + sum(speed[s] for s in STEPS) * sum(lens[i + 1:])
+        return rest + sum(speed[s] for s in STEPS[STEPS.index(step):]) * lens[i] if i < len(starts) else speed["summary"]
+
+    def timed(i, step):  # record a finished step's speed: later estimates in this run use it, and it's saved for next time
+        speed[step] = (time.time() - t0) / lens[i]
+        save_speed({step: speed[step]})
+        return time.time()
+
     with tempfile.TemporaryDirectory() as tmp:
         for i, start in enumerate(starts):
             tag = f"Part {i + 1}/{len(starts)}"
-            progress(f"{tag}: compressing video...", span(i, 0, .1))
+            if i < len(parts):
+                progress(f"{tag}: already reviewed, skipping...", span(i, 1, 1), left(i + 1))
+                continue
+            t0 = time.time()
+            progress(f"{tag}: compressing video...", span(i, 0, .1), left(i, "compress"))
             seg = os.path.join(tmp, f"seg{i}.mp4")
             cut_segment(path, start, SEGMENT_SEC, seg, g["height"])
+            t0 = timed(i, "compress")
 
-            progress(f"{tag}: uploading VOD to coach...", span(i, .1, .25))
+            progress(f"{tag}: uploading VOD to coach...", span(i, .1, .25), left(i, "upload"))
             f = client.files.upload(file=seg)
             try:
                 while f.state.name == "PROCESSING":
@@ -328,10 +390,11 @@ def analyze(path, api_key, models, p, progress):
                     f = client.files.get(name=f.name)
                 if f.state.name != "ACTIVE":
                     raise RuntimeError(f"Gemini could not process the video ({f.state.name})")
+                t0 = timed(i, "upload")
 
-                progress(f"{tag}: coach is watching...", span(i, .25, 1))
+                progress(f"{tag}: coach is watching...", span(i, .25, 1), left(i, "watch"))
                 resp = generate(client, progress, models,
-                                contents=[f, prompt(game, p, start, contexts[-1] if contexts else "", kits)],
+                                contents=[f, prompt(game, p, start, parts[-1]["context"] if parts else "", kits)],
                                 config=types.GenerateContentConfig(response_mime_type="application/json",
                                                                    response_schema=SegmentReport,
                                                                    media_resolution=LOW_RES))
@@ -342,14 +405,17 @@ def analyze(path, api_key, models, p, progress):
                     pass  # not fatal: Gemini auto-deletes uploads after 48h
 
             rep = resp.parsed or SegmentReport.model_validate_json(resp.text)
-            map_name = map_name or rep.map
-            contexts.append(rep.context)
-            for m in rep.moments:
-                d = m.model_dump()
-                d["seconds"] = start + to_seconds(m.time)
-                moments.append(d)
+            parts.append({"map": rep.map, "context": rep.context,
+                          "moments": [m.model_dump() | {"seconds": start + to_seconds(m.time)} for m in rep.moments]})
+            Path(partial_path(path)).write_text(json.dumps({"key": key, "parts": parts}, indent=1), encoding="utf-8")
+            timed(i, "watch")
 
-    progress("Writing summary...", span(len(starts), 0, .15))
+    map_name = next((pt["map"] for pt in parts if pt["map"]), "")
+    contexts = [pt["context"] for pt in parts]
+    moments = [m for pt in parts for m in pt["moments"]]
+
+    progress("Writing summary...", span(len(starts), 0, .15), speed["summary"])
+    t0 = time.time()
     summary = generate(
         client, progress, models,
         contents=f"""You coached a {g['title']} player ({g['who'](p)}) through a full match. Your notes:
@@ -359,8 +425,13 @@ Match flow: {" | ".join(contexts)}
 Write an overview, the 3-5 recurring issues that cost them the most {g['summary_unit']} (with concrete drills/habits to fix them), and their strengths.""",
         config=types.GenerateContentConfig(response_mime_type="application/json", response_schema=Summary))
     s = summary.parsed or Summary.model_validate_json(summary.text)
+    save_speed({"summary": time.time() - t0})
 
     moments.sort(key=lambda m: m["seconds"])
+    try:
+        os.remove(partial_path(path))  # done: the full report replaces it
+    except OSError:
+        pass
     return {"video": os.path.basename(path), **{k: p.get(k, "") for k in ("game", "agent", "rank", "role", "opponent")},
             "map": map_name, "model": models[0] if models else "", **s.model_dump(), "moments": moments}
 

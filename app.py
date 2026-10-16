@@ -9,7 +9,7 @@ import coach
 
 HERE = Path(__file__).parent
 SETTINGS = Path.home() / ".vodcoach.json"
-VERSION = "1.2"  # bump with every GitHub release (tag it v<VERSION>)
+VERSION = "1.3"  # bump with every GitHub release (tag it v<VERSION>)
 REPO = "TsakasOptimizations/VOD_Coach"
 STORE = "WindowsApps" in sys.executable  # installed from the Microsoft Store: the Store handles updates
 current = {"path": None}
@@ -58,6 +58,27 @@ threading.Thread(target=server.serve_forever, daemon=True).start()
 
 def report_path(video):
     return video + ".coach.json"
+
+
+class Cancelled(Exception):
+    pass
+
+
+def flash_taskbar():
+    """Blink the taskbar button until the user comes back: a review takes minutes and people switch away."""
+    if sys.platform != "win32":
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    class FLASHWINFO(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.UINT), ("hwnd", wintypes.HWND), ("dwFlags", wintypes.DWORD),
+                    ("uCount", wintypes.UINT), ("dwTimeout", wintypes.DWORD)]
+    user32 = ctypes.windll.user32
+    hwnd = user32.FindWindowW(None, "VOD Coach")
+    if hwnd and hwnd != user32.GetForegroundWindow():
+        info = FLASHWINFO(ctypes.sizeof(FLASHWINFO), hwnd, 3 | 12, 0, 0)  # FLASHW_ALL | FLASHW_TIMERNOFG
+        user32.FlashWindowEx(ctypes.byref(info))
 
 
 class Api:
@@ -167,20 +188,47 @@ class Api:
     def get_status(self):
         return self._status
 
-    def analyze(self, s):
-        path = current["path"]
+    _run = None  # the running review; cancel() clears it
 
-        def progress(msg, span=None):  # span: this step's share of the job, "since" lets the bar creep through it
-            self._status = {**self._status, "msg": msg, **({"from": span[0], "to": span[1], "since": time.time()} if span else {})}
-        try:
-            report = coach.analyze(path, s["api_key"], [s["model"]] + [m for m in self._models if m != s["model"]], s, progress)
-            Path(report_path(path)).write_text(json.dumps(report, indent=1), encoding="utf-8")
-            return {"report": report}
-        except Exception as e:
-            traceback.print_exc()
-            return {"error": f"{type(e).__name__}: {e}"}
-        finally:
-            self._status = {}
+    def cancel(self):
+        self._run = None
+        self._status = {}
+
+    def analyze(self, s):
+        path, run, out, done = current["path"], object(), {}, threading.Event()
+        self._run = run
+
+        def progress(msg, span=None, left=None):  # span: this step's share of the job, "since" lets the bar creep through it
+            if self._run is not run:
+                raise Cancelled  # stops the cancelled review at its next step (finished parts stay saved)
+            self._status = {**self._status, "msg": msg, **({"from": span[0], "to": span[1], "since": time.time()} if span else {}),
+                            **({"end": time.time() + left} if left is not None else {})}
+
+        def work():
+            try:
+                report = coach.analyze(path, s["api_key"], [s["model"]] + [m for m in self._models if m != s["model"]], s, progress)
+                Path(report_path(path)).write_text(json.dumps(report, indent=1), encoding="utf-8")
+                out["report"] = report
+            except Cancelled:
+                pass
+            except Exception as e:
+                traceback.print_exc()
+                out["error"] = f"{type(e).__name__}: {e}"
+            finally:
+                done.set()
+
+        # Work runs on its own thread so Cancel answers at once, even mid-request; the old run quits at its next step.
+        threading.Thread(target=work, daemon=True).start()
+        while not done.wait(.25):
+            if self._run is not run:
+                break
+        if self._run is run:
+            self._run, self._status = None, {}
+            flash_taskbar()
+        else:
+            out = {"cancelled": True}
+        out["resume"] = os.path.exists(coach.partial_path(path))
+        return out
 
 
 if __name__ == "__main__":

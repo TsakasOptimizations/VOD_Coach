@@ -1,6 +1,6 @@
 # VOD Coach Privacy Policy
 
-_Last updated: October 15, 2026_
+_Last updated: October 16, 2026_
 
 VOD Coach is a free desktop app that reviews your VALORANT and League of Legends match recordings with Google Gemini.
 The developer (TsakasTweaks) does not run any servers, does not have user accounts, and does not collect, receive or
@@ -15,9 +15,10 @@ These are stored only on your computer, in your user folder:
 | Your Google Gemini API key and app settings (game, agent/champion, rank, chosen coach) | `~/.vodcoach.json` |
 | Your "Disagree" notes for the coach | `~/.vodcoach_feedback.json` |
 | How many free reviews you used today | `~/.vodcoach_usage.json` |
-| Downloaded agent, champion and rank data | `~/.vodcoach_cache/` |
+| Downloaded agent, champion and rank data, and how long reviews usually take (for the time-left estimate) | `~/.vodcoach_cache/` |
 | Error log | `~/.vodcoach.log` |
 | Coaching reports | Next to each video, as `yourvideo.mp4.coach.json` |
+| Finished parts of an unfinished review, so it can continue later (deleted when the review completes) | Next to each video, as `yourvideo.mp4.coach.partial.json` |
 
 Uninstalling the app does not delete these files. You can delete them yourself at any time.
 

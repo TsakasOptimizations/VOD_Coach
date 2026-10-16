@@ -36,7 +36,9 @@ The first time you open it, the app walks you through getting your free Gemini k
 1. **Open VOD** and pick your full match recording (OBS, Outplayed, Medal, Twitch VOD...).
 2. Pick the game, your agent or champion (plus role and lane opponent for League) and your rank.
 3. Optionally, tell the coach what to focus on.
-4. Click **Analyze match**. A 30 minute game takes a few minutes.
+4. Click **Analyze match**. A 30 minute game takes a few minutes; the progress bar shows roughly how long is left, and
+   the taskbar icon blinks when the report is ready. **Cancel** stops it, and finished parts are kept, so analyzing
+   again continues where it stopped.
 
 The report is saved next to the video (`yourvod.mp4.coach.json`), so reopening that video later shows it instantly.
 

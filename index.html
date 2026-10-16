@@ -31,7 +31,14 @@
   .slider::-webkit-slider-thumb { -webkit-appearance:none; width:12px; height:12px; border-radius:50%; background:#fff;
             transition:transform .1s; }
   .slider:hover::-webkit-slider-thumb { transform:scale(1.25); }
-  #seek { width:100%; margin:8px 0 6px; }
+  #seek { display:block; width:100%; margin:6px 0 10px; }
+  /* Note markers above the seek bar, coloured by severity */
+  #marks { position:relative; height:8px; margin-top:6px; }
+  .mark { position:absolute; top:0; width:4px; height:8px; padding:0; border-radius:2px; transform:translateX(-50%);
+          background:var(--dim); transition:transform .1s; }
+  .mark:hover { transform:translateX(-50%) scale(1.6); }
+  .mark.good{background:var(--good)} .mark.minor{background:var(--minor)}
+  .mark.major{background:var(--major)} .mark.critical{background:var(--critical)} .mark.disputed { opacity:.35; }
   /* Volume: icon that shows the level, slider slides out on hover */
   .volgroup { display:flex; align-items:center; }
   #cVol { width:0; opacity:0; transition:width .15s, opacity .15s, margin .15s; }
@@ -53,6 +60,7 @@
   #prog { display:flex; align-items:center; gap:10px; margin-top:10px; } #prog[hidden] { display:none; }
   .pbar { flex:1; height:6px; background:var(--line); border-radius:3px; overflow:hidden; }
   #pfill { height:100%; background:var(--red); transform:scaleX(0); transform-origin:left; transition:transform 1s linear; }
+  #prog #cancel { padding:4px 10px; font-size:11px; }
   #pct { font-size:12px; color:var(--dim); font-variant-numeric:tabular-nums; white-space:nowrap; }
   .bar button { white-space:nowrap; }
   #updDialog { background:var(--panel); color:var(--text); border:1px solid var(--red); border-radius:8px; padding:20px;
@@ -134,6 +142,7 @@
   <div class="player" id="playerWrap">
     <video id="player"></video>
     <div class="controls">
+      <div id="marks"></div>
       <input type="range" class="slider" id="seek" min="0" max="0" step="0.1" value="0" aria-label="Seek">
       <div class="ctrlrow">
         <button class="cbtn" id="cPlay" title="Play / pause (Space)" aria-label="Play"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></button>
@@ -193,7 +202,7 @@
     <button id="analyze" disabled>Analyze match</button>
     <span id="status"></span>
   </div>
-  <div id="prog" hidden><div class="pbar" role="progressbar" aria-label="Analysis progress"><div id="pfill"></div></div><span id="pct"></span></div>
+  <div id="prog" hidden><div class="pbar" role="progressbar" aria-label="Analysis progress"><div id="pfill"></div></div><span id="pct"></span><button class="ghost" id="cancel">Cancel</button></div>
   <p id="quota"></p>
 
   <div id="report"><p class="empty">Open a VOD to get started.</p></div>
@@ -315,12 +324,25 @@ async function loadModels() {
   } catch (e) { showKeyCard(e.message || String(e)); }
 }
 
+// Severities ticked in the report's filters (all of them before the report has been drawn)
+const shownSev = () => document.querySelector(".filters")
+  ? new Set([...document.querySelectorAll(".filters input:checked")].map(i => i.value)) : new Set(["critical","major","minor","good"]);
+function renderMarks() {
+  const d = V.duration || videoSeconds, keep = shownSev();
+  $("marks").innerHTML = !report || !d ? "" : report.moments.map(m => !keep.has(m.severity) ? "" :
+    `<button class="mark ${m.severity}${m.disagree != null ? " disputed" : ""}" data-t="${m.seconds}" style="left:${Math.min(100, m.seconds / d * 100)}%"
+      title="${fmt(m.seconds)} ${esc(m.title)}" aria-label="${fmt(m.seconds)} ${esc(m.title)}"></button>`).join("");
+}
+// jump a couple seconds early so you see the setup, not just the mistake
+const jump = t => { V.currentTime = Math.max(0, t - 3); V.play(); };
+$("marks").addEventListener("click", e => e.target.dataset.t && jump(+e.target.dataset.t));
+
 function render() {
+  renderMarks();
   if (!report) { $("report").innerHTML = `<p class="empty">${videoOpen ? "Pick your game, " + GAMES[$("game").value].who.toLowerCase() + " and rank, then hit Analyze." : "Open a VOD to get started."}</p>`; return; }
-  const shown = new Set([...document.querySelectorAll(".filters input:checked")].map(i => i.value));
+  const shown = shownSev();
   const sev = ["critical","major","minor","good"];
-  const filters = sev.map(s => `<label><input type="checkbox" value="${s}" ${!document.querySelector(".filters") || shown.has(s) ? "checked" : ""}>${s}</label>`).join("");
-  const keep = document.querySelector(".filters") ? shown : new Set(sev);
+  const filters = sev.map(s => `<label><input type="checkbox" value="${s}" ${shown.has(s) ? "checked" : ""}>${s}</label>`).join("");
   $("report").innerHTML = `
     <h2>${esc(report.agent)}${report.role && report.game === "lol" ? " " + esc(report.role) : ""} · ${esc(report.rank)}${report.map ? " · " + esc(report.map) : ""}</h2>
     <p>${esc(report.overview)}</p>
@@ -330,7 +352,7 @@ function render() {
     <ul>${report.strengths.map(s => `<li>${esc(s)}</li>`).join("")}</ul>
     <h2>Timeline (${report.moments.length})</h2>
     <div class="filters">${filters}</div>
-    ${report.moments.map((m, i) => !keep.has(m.severity) ? "" : `
+    ${report.moments.map((m, i) => !shown.has(m.severity) ? "" : `
       <div class="moment ${m.severity}${m.disagree != null ? " disputed" : ""}">
         <div class="head"><button class="ts" data-t="${m.seconds}">${fmt(m.seconds)}</button>
           <b>${esc(m.title)}</b><span class="tag">${m.round ? "R" + m.round + " · " : ""}${esc(m.category.replace("_"," "))}</span></div>
@@ -364,7 +386,7 @@ V.addEventListener("volumechange", () => {
   setIcon($("cMute"), V.muted || !V.volume ? ICON.mute : V.volume < .5 ? ICON.low : ICON.vol);
   $("cVol").value = V.muted ? 0 : V.volume; fill($("cVol"));
 });
-V.addEventListener("loadedmetadata", () => { $("seek").max = V.duration; V.playbackRate = +$("cSpeed").value; });
+V.addEventListener("loadedmetadata", () => { $("seek").max = V.duration; V.playbackRate = +$("cSpeed").value; renderMarks(); });
 V.addEventListener("timeupdate", () => {
   $("seek").value = V.currentTime;
   $("cTime").innerHTML = `${fmt(V.currentTime)} <span class="dur">/ ${fmt(V.duration || 0)}</span>`;
@@ -396,10 +418,9 @@ $("report").addEventListener("click", e => {
   }
   if (d.save) return setDisagree(d.save, e.target.closest(".disform").querySelector("textarea").value.trim());
   if (d.cancel !== undefined) return render();
-  const t = d.t;
-  // jump a couple seconds early so you see the setup, not just the mistake
-  if (t) { $("player").currentTime = Math.max(0, t - 3); $("player").play(); }
+  if (d.t) jump(+d.t);
 });
+$("cancel").onclick = () => pywebview.api.cancel();
 $("report").addEventListener("change", e => e.target.closest(".filters") && render());
 
 $("open").onclick = async () => {
@@ -424,15 +445,19 @@ $("analyze").onclick = async () => {
   $("pfill").style.transform = "scaleX(0)"; $("prog").hidden = false;
   const poll = setInterval(async () => {
     const st = await pywebview.api.get_status();
-    $("status").textContent = st.msg || "";
+    $("status").textContent = (st.msg || "").replace(/gemini-\d+(\.\d+)?-flash/g, coachName);  // model ids -> "Pro Coach" etc.
     const p = st.to ? st.from + (st.to - st.from) * (1 - Math.exp(-(Date.now() / 1000 - st.since) / 60)) : 0;
     $("pfill").style.transform = `scaleX(${p})`;
-    $("pct").textContent = `${Math.floor(p * 100)}% · ${fmt((Date.now() - t0) / 1000)}`;
+    const left = st.end ? st.end - Date.now() / 1000 : null;  // learned from past reviews, so only a rough guess
+    const eta = left == null ? "" : left > 60 ? ` · about ${Math.round(left / 60)} min left` : left > 0 ? " · under a minute left" : " · taking longer than usual";
+    $("pct").textContent = `${Math.floor(p * 100)}% · ${fmt((Date.now() - t0) / 1000)}${eta}`;
   }, 1000);
   const res = await pywebview.api.analyze(s);
   clearInterval(poll); $("prog").hidden = true; updateQuota();
   $("open").disabled = false; refresh();
-  if (res.error) { $("status").textContent = res.error; return; }
+  const resume = res.resume ? " Finished parts are saved: click Analyze match to continue from there." : "";
+  if (res.cancelled) { $("status").textContent = "Cancelled." + resume; return; }
+  if (res.error) { $("status").textContent = res.error + resume; return; }
   $("status").textContent = ""; report = res.report; render();
 };
 

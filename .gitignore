@@ -2,6 +2,7 @@
 *.mkv
 *.mov
 *.coach.json
+*.coach.partial.json
 __pycache__/
 dist/
 build/
