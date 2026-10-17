@@ -37,8 +37,11 @@ Requires a Google account to create a free Gemini API key. Free daily limits are
 VOD Coach isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, VALORANT and League of Legends are trademarks or registered trademarks of Riot Games, Inc.
 
 ## What's new in this version
-- When the coaches are busy, the review now keeps retrying for a few minutes and switches coaches instead of stopping right away
-- New: if something goes wrong, you can send a bug report with one click
+- Smarter League of Legends coach: it now reads the minimap and HUD (levels, HP, cooldowns, summoner spells, gold) and judges each play by the situation, not by whether it got a kill
+- Every note shows the situation it was judged on, and each "good play" is double-checked before it's called good
+- Deeper, harsher reviews for Diamond and above
+- New Send feedback button
+- When the coaches are busy, the review keeps retrying for a few minutes instead of stopping right away
 
 ## Product features (one per line in Partner Center)
 - AI review of full VALORANT and League of Legends matches

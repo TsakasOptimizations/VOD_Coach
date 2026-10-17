@@ -87,7 +87,7 @@
   .moment .head { display:flex; gap:8px; align-items:baseline; }
   .ts { color:var(--red); font:600 13px Consolas, monospace; cursor:pointer; text-decoration:underline; background:none; padding:0; }
   .tag { font-size:11px; color:var(--dim); text-transform:uppercase; margin-left:auto; white-space:nowrap; }
-  .moment p { margin:4px 0 0; } .better { color:var(--good); }
+  .moment p { margin:4px 0 0; } .better { color:var(--good); } .sit { color:var(--dim); font-size:12px; }
   .link { background:none; border:0; padding:0; margin-top:6px; color:var(--dim); font:12px inherit;
           text-transform:none; letter-spacing:0; text-decoration:underline; }
   .moment.disputed { opacity:.6; }
@@ -139,7 +139,7 @@
     <h1><img src="assets/wordmark.png" alt="VOD Coach" class="wordmark"></h1>
     <button class="ghost" id="open">Open VOD</button>
     <span id="name" style="color:var(--dim)"></span>
-    <span class="upd"><span id="updmsg"></span><button class="ghost" id="update">Check for updates</button></span>
+    <span class="upd"><span id="updmsg"></span><button class="ghost" id="feedback">Send feedback</button><button class="ghost" id="update">Check for updates</button></span>
   </div>
   <div class="player" id="playerWrap">
     <video id="player"></video>
@@ -219,9 +219,9 @@
 
 <dialog id="bugDialog" aria-labelledby="bugTitle">
   <h2 id="bugTitle" class="cardtitle">You encountered a bug</h2>
-  <p>Sorry about that. Send a report so it can get fixed. It includes the app version and error details,
+  <p id="bugIntro">Sorry about that. Send a report so it can get fixed. It includes the app version and error details,
     never your API key or your videos.</p>
-  <label for="bugNote">What were you doing? (optional)</label>
+  <label for="bugNote" id="bugLabel">What were you doing? (optional)</label>
   <textarea id="bugNote" rows="2" placeholder="e.g. analyzing a League game, it stopped at part 2"></textarea>
   <p id="bugMsg" role="status"></p>
   <div class="bar"><button id="bugSend">Send report</button><button class="ghost" id="bugClose">Close</button></div>
@@ -268,7 +268,7 @@ document.querySelectorAll(".pick input").forEach(input => {
 async function updateQuota() {
   const model = $("model").value;
   if (!model || !window.pywebview) return;
-  const q = await pywebview.api.quota(model, videoSeconds);
+  const q = await pywebview.api.quota(model, videoSeconds, $("game").value);
   const h = Math.floor(q.reset_in / 3600), m = Math.floor(q.reset_in % 3600 / 60);
   const coach = esc(coachName(model));
   const n = q.games;  // the selected coach's own allowance
@@ -288,7 +288,7 @@ async function setGame(game) {
   document.querySelectorAll(".gamebtn").forEach(b => b.classList.toggle("active", b.dataset.game === game));
   $("agentLabel").textContent = g.who; $("agent").placeholder = g.eg; $("focus").placeholder = g.focus;
   document.querySelectorAll(".lol").forEach(el => el.hidden = game !== "lol");
-  roster = []; ranks = [];
+  roster = []; ranks = []; updateQuota();
   const [names, rankList] = await Promise.all([pywebview.api.agent_names(game), pywebview.api.ranks(game)]);
   if ($("game").value !== game) return;  // switched again while loading
   roster = names; ranks = rankList;
@@ -368,6 +368,7 @@ function render() {
       <div class="moment ${m.severity}${m.disagree != null ? " disputed" : ""}">
         <div class="head"><button class="ts" data-t="${m.seconds}">${fmt(m.seconds)}</button>
           <b>${esc(m.title)}</b><span class="tag">${m.round ? "R" + m.round + " · " : ""}${esc(m.category.replace("_"," "))}</span></div>
+        ${m.situation ? `<p class="sit">${esc(m.situation)}</p>` : ""}
         <p>${esc(m.what_happened)}</p>
         <p class="better">→ ${esc(m.better)}</p>
         ${m.disagree != null
@@ -476,9 +477,19 @@ $("analyze").onclick = async () => {
 };
 
 // --- Bug reports: unexpected errors (not limits or a busy Gemini) open a popup that can send them to the developer
-async function showBug() {
+// The same popup sends feedback: Send feedback button, their message only.
+const BUG_TEXT = {title: $("bugTitle").textContent, intro: $("bugIntro").innerHTML, label: $("bugLabel").textContent,
+                  ph: $("bugNote").placeholder, send: $("bugSend").textContent};
+const FEEDBACK_TEXT = {title: "Send feedback", intro: "Ideas, wrong advice, anything you'd change. It goes straight to the developer.",
+                       label: "Your feedback", ph: "e.g. the coach called my dive good but I was lucky", send: "Send feedback"};
+let feedbackMode = false;
+async function showBug(feedback = false) {
   if ($("bugDialog").open) return;
   const b = await pywebview.api.bug_report();
+  feedbackMode = feedback;
+  const T = feedback ? FEEDBACK_TEXT : BUG_TEXT;
+  $("bugTitle").textContent = T.title; $("bugIntro").innerHTML = T.intro; $("bugLabel").textContent = T.label;
+  $("bugNote").placeholder = T.ph; $("bugNote").rows = feedback ? 5 : 2; $("bugSend").textContent = T.send;
   $("bugNote").value = "";
   $("bugMsg").textContent = b.can_send ? "" : "Reporting isn't set up in this copy of the app.";
   $("bugMsg").className = "";
@@ -488,13 +499,14 @@ async function showBug() {
 $("bugSend").onclick = async () => {
   $("bugSend").disabled = true; $("bugMsg").className = ""; $("bugMsg").textContent = "Sending...";
   try {
-    await pywebview.api.send_report($("bugNote").value);
-    $("bugMsg").className = "ok"; $("bugMsg").textContent = "Thanks! Report sent.";
+    await pywebview.api.send_report($("bugNote").value, feedbackMode);
+    $("bugMsg").className = "ok"; $("bugMsg").textContent = feedbackMode ? "Thanks! Feedback sent." : "Thanks! Report sent.";
   } catch (e) {
     $("bugSend").disabled = false; $("bugMsg").className = "bad"; $("bugMsg").textContent = e.message || String(e);
   }
 };
 $("bugClose").onclick = () => $("bugDialog").close();
+$("feedback").onclick = () => showBug(true);
 let reportingJs = false;  // never report an error raised while reporting one
 async function jsBug(msg, stack) {
   if (reportingJs || !window.pywebview?.api?.report_js_error) return;

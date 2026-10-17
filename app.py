@@ -9,7 +9,7 @@ import coach
 
 HERE = Path(__file__).parent
 SETTINGS = Path.home() / ".vodcoach.json"
-VERSION = "1.3.2"  # bump with every GitHub release (tag it v<VERSION>)
+VERSION = "1.4"  # bump with every GitHub release (tag it v<VERSION>)
 REPO = "TsakasOptimizations/VOD_Coach"
 STORE = "WindowsApps" in sys.executable  # installed from the Microsoft Store: the Store handles updates
 current = {"path": None}
@@ -112,12 +112,19 @@ class Api:
     def bug_report(self):  # the details stay on the Python side: only Send report ships them, straight to Discord
         return {"can_send": WEBHOOK_FILE.exists()}
 
-    def send_report(self, note):
-        note = scrub(note.strip()[:400], self.load_settings().get("api_key", ""))
-        head = f"**What they were doing:** {note}\n" if note else ""
-        body = self._bug[-(1900 - len(head)):]  # Discord caps a message at 2000 chars; the end of a traceback matters most
+    def send_report(self, note, feedback=False):
+        """A bug report (the last bug's details + their note) or, with feedback=True, just their message."""
+        note = scrub(note.strip()[:1500 if feedback else 400], self.load_settings().get("api_key", ""))
+        if feedback:
+            if not note:
+                raise RuntimeError("Write your feedback first.")
+            name, content = "VOD Coach feedback", f"**Feedback** (VOD Coach {VERSION}, {'Store' if STORE else 'GitHub'}):\n{note}"
+        else:
+            head = f"**What they were doing:** {note}\n" if note else ""
+            body = self._bug[-(1900 - len(head)):]  # Discord caps a message at 2000 chars; the end of a traceback matters most
+            name, content = "VOD Coach bug report", f"{head}```\n{body}\n```"
         req = urllib.request.Request(WEBHOOK_FILE.read_text(encoding="utf-8").strip(),
-                                     data=json.dumps({"username": "VOD Coach bug report", "content": f"{head}```\n{body}\n```"}).encode(),
+                                     data=json.dumps({"username": name, "content": content}).encode(),
                                      headers={"Content-Type": "application/json", "User-Agent": f"VODCoach/{VERSION}"})
         try:
             urllib.request.urlopen(req, timeout=15)
@@ -180,8 +187,8 @@ class Api:
     def open_key_page(self):
         webbrowser.open("https://aistudio.google.com/apikey")
 
-    def quota(self, model, seconds):
-        per_game = coach.requests_per_game(seconds or 35 * 60)
+    def quota(self, model, seconds, game="valorant"):
+        per_game = coach.requests_per_game(seconds or 35 * 60, game)
         others = [m for m in self._models if m != model]
         return {"games": coach.requests_left(model) // per_game,
                 "games_all": sum(coach.requests_left(m) for m in [model] + others) // per_game,

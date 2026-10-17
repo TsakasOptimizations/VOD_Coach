@@ -19,18 +19,20 @@ class CoachError(RuntimeError):
 
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # the windowed .exe would otherwise flash a console for ffmpeg
 HERE = Path(__file__).parent
-# Low media resolution = ~100 tokens per video second, so a 25 min part is ~160k tokens: under the free 250k tokens/minute.
-SEGMENT_SEC = 25 * 60
+# Each part has to stay under the free 250k tokens/minute. Low media resolution is ~100 tokens per video second (25 min
+# part ~160k tokens); medium is ~300 (10 min part ~180k), which League needs to read the minimap and HUD.
 LOW_RES = types.MediaResolution.MEDIA_RESOLUTION_LOW
+MEDIUM_RES = types.MediaResolution.MEDIA_RESOLUTION_MEDIUM
 
 
 class Moment(BaseModel):
     time: str  # MM:SS inside the clip
     round: Optional[int]
     category: str
+    situation: str  # the facts before the decision; asked for first so the verdict is built on them, not on the outcome
+    what_happened: str
     severity: Literal["good", "minor", "major", "critical"]
     title: str
-    what_happened: str
     better: str
 
 
@@ -45,7 +47,16 @@ class Issue(BaseModel):
     advice: str
 
 
+class Verdict(BaseModel):  # a second look at one note, the way a pro checks their own review before handing it over
+    i: int
+    category: str
+    severity: Literal["good", "minor", "major", "critical"]
+    title: str
+    better: str
+
+
 class Summary(BaseModel):
+    verdicts: list[Verdict]
     overview: str
     top_issues: list[Issue]
     strengths: list[str]
@@ -67,11 +78,19 @@ def to_seconds(ts):
     return secs
 
 
-def cut_segment(src, start, length, dst, height):
+def cut_segment(src, start, length, dst, frame):
     # Low fps keeps uploads small; Gemini only samples 1 fps anyway. Audio kept for footsteps/comms/pings.
     subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ss", str(start), "-t", str(length), "-i", src,
-                    "-vf", f"scale=-2:{height},fps=5", "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
-                    "-c:a", "aac", "-b:a", "64k", dst], check=True, creationflags=NO_WINDOW)
+                    "-filter_complex", f"[0:v]fps=5,{frame}[v]", "-map", "[v]", "-map", "0:a?",
+                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-c:a", "aac", "-b:a", "64k", dst],
+                   check=True, creationflags=NO_WINDOW)
+
+
+# League frame: game view, with the minimap and the HUD bar (levels, HP/mana, cooldowns, summoners, items) cut out
+# and enlarged next to it, so they're still readable after Gemini shrinks each frame.
+# ponytail: crops assume a 16:9 recording with default minimap/HUD placement; make them settings if players differ
+LOL_FRAME = ("split=3[a][b][c];[a]scale=960:540[g];[b]crop=iw*0.22:ih*0.4:iw*0.78:ih*0.6,scale=540:540[m];"
+             "[c]crop=iw*0.36:ih*0.11:iw*0.28:ih*0.89,scale=1500:258[h];[g][m]hstack[t];[t][h]vstack")
 
 
 # --- Free-tier quota tracking. Google has no API for "requests left", so we count our own requests per Pacific day
@@ -100,8 +119,8 @@ def requests_left(model):
     return max(0, FREE_RPD - _usage()["used"].get(model, 0))
 
 
-def requests_per_game(seconds):
-    return math.ceil(max(seconds, 1) / SEGMENT_SEC) + 1  # one per video part + the summary
+def requests_per_game(seconds, game="valorant"):
+    return math.ceil(max(seconds, 1) / GAMES[game]["segment"]) + 1  # one per video part + the summary
 
 
 def reset_in_seconds():
@@ -237,7 +256,7 @@ GAMES = {
         "title": "VALORANT",
         "kits": lambda: cached("valorant.json", valorant_kits),
         "ranks": lambda: cached("valorant_ranks.json", valorant_ranks) or [],
-        "height": 720,
+        "segment": 25 * 60, "res": LOW_RES, "frame": "scale=-2:720",
         "categories": "death, ability, positioning, crosshair, utility, economy, trade, comms, good_play",
         "who": lambda p: f"playing {p['agent']}, currently {p['rank']}",
         "focus_hint": lambda p: f"""- what_happened: what you actually see on screen (position, ability used, enemies, minimap, kill feed).
@@ -254,7 +273,21 @@ context: one or two sentences of map, side, score and the player's patterns so f
         "title": "League of Legends",
         "kits": lambda: cached("lol.json", lol_kits),
         "ranks": lol_ranks,
-        "height": 1080,  # ponytail: minimap is tiny; if Gemini still misreads it, upload a cropped+enlarged minimap too
+        "segment": 10 * 60, "res": MEDIUM_RES, "frame": LOL_FRAME,
+        "layout": "Each frame shows the game (top left), the minimap enlarged (top right) and the HUD bar enlarged "
+                  "(bottom: level, HP/mana, ability and summoner spell cooldowns, items, gold). Read them.",
+        "rules": """How a pro coach judges - follow this strictly:
+- Judge the decision with what was knowable at that moment, never the outcome. A dive or fight that got a kill can
+  still be a bad play (it worked because the enemy misplayed or it was a coin flip). Say so plainly. A death can be correct.
+- Before judging a fight, trade, dive, recall or rotation, read and write down: game time; both sides' levels and
+  upcoming spikes (level 2/3/6, item completions); HP and mana; which summoner spells and key abilities are down on
+  each side; the wave (size, who it pushes towards, crashing or under whose tower); where the enemy jungler was last
+  seen and how long ago; vision; gold.
+- Dives: was the wave under the tower to tank shots, how many tower shots it took, enemy summoners up, enemy jungler
+  location, whether the reward beat the risk. A dive that only worked because the enemy misplayed is not good.
+- Also count missed opportunities, not only errors: CS left in waves, wave states wasted before objectives or recalls,
+  off-tempo recalls, unspent gold, untracked jungler, free plates or objectives not taken, cooldown windows not punished.
+- better is the exact alternative with timing, e.g. "freeze 3 waves, then fight at level 6 when their Flash is down".""",
         "categories": "cs_waves, trading, recall, vision, map_awareness, objectives, rotation, teamfight, itemization, death, good_play",
         "who": lambda p: f"playing {p['agent']} {p.get('role', '')}, currently {p['rank']}"
                          + (f", lane opponent {p['opponent']}" if p.get("opponent") else ""),
@@ -315,10 +348,25 @@ advice in the same situations, and adopt their reasoning where it makes sense (t
 """
 
 
+HIGH_ELO = {"Diamond", "Master", "Grandmaster", "Challenger", "Ascendant", "Immortal", "Radiant"}
+
+
+def depth(p):
+    if p["rank"].split()[:1] and p["rank"].split()[0] in HIGH_ELO:
+        return ("This is a high-elo player: their basics are solid, so don't coach basics unless they're clearly broken. "
+                "Coach like a pro team's analyst: tempo, priority, wave states, jungle tracking, cooldown and summoner "
+                "windows, objective setup, decision quality. A pro reviewer finds dozens of mistakes in a game at this "
+                "level. Expect about 4-6 real mistakes or missed chances per 10 minutes of gameplay - small ones count (a wasted "
+                "wave, a late recall, an unpunished cooldown) - and at most 2 clearly good decisions. Never pad.")
+    return "Pitch advice at the level that will get them to the next rank."
+
+
 def prompt(game, p, offset, prev_context, kits):
     g = GAMES[game]
     return f"""You are an elite {g['title']} coach reviewing a player's own POV recording.
-Player: {g['who'](p)}. Pitch advice at the level that will get them to the next rank.
+Player: {g['who'](p)}. {depth(p)}
+{g.get('layout', '')}
+{g.get('rules', '')}
 {kits_text(game, kits, p)}
 Never invent ability names or effects - only use the kits above.
 {feedback_text(game, p['agent'])}
@@ -329,8 +377,10 @@ This clip starts {int(offset // 60)} minutes into the full recording.
 Watch the whole clip and list concrete, timestamped coaching moments. For each:
 - time: MM:SS relative to THIS clip, at the moment the decision was made (not when they died).
 - category: one of {g['categories']}.
+- situation: the facts on screen right before the decision (see above), written before you judge it.
 {g['focus_hint'](p)}
-Include clear good plays too (severity "good", category "good_play") so they know what to keep doing.
+Include good plays too (severity "good", category "good_play"), but only decisions that were right given the
+situation - not plays that merely got a kill.
 Only report what you can actually see; don't invent events."""
 
 
@@ -380,12 +430,12 @@ def analyze(path, api_key, models, p, progress):
     p = {**p, "agent": canon(p["agent"]), "opponent": canon(p.get("opponent", ""))}
     if game != "lol":  # role and lane opponent are League-only; the form keeps the last League values around
         p.update(role="", opponent="")
-    starts = list(range(0, int(total), SEGMENT_SEC))
+    starts = list(range(0, int(total), g["segment"]))
     units = len(starts) + 0.15  # each part is 1 unit (mostly the watching), the summary is a small extra step
     span = lambda i, a, b: ((i + a) / units, (i + b) / units)
 
     # Same settings as a saved unfinished review of this video? Then keep its finished parts.
-    key = {k: p.get(k, "") for k in ("game", "agent", "rank", "role", "opponent", "focus")} | {"segment": SEGMENT_SEC}
+    key = {k: p.get(k, "") for k in ("game", "agent", "rank", "role", "opponent", "focus")} | {"segment": g["segment"]}
     try:
         saved = json.loads(Path(partial_path(path)).read_text(encoding="utf-8"))
         parts = saved["parts"] if saved["key"] == key else []
@@ -393,7 +443,7 @@ def analyze(path, api_key, models, p, progress):
         parts = []
 
     speed, _ = load_speed()
-    lens = [min(SEGMENT_SEC, total - st) for st in starts]
+    lens = [min(g["segment"], total - st) for st in starts]
 
     def left(i, step="compress"):  # seconds until the report is done, from the start of `step` in part i
         rest = speed["summary"] + sum(speed[s] for s in STEPS) * sum(lens[i + 1:])
@@ -413,7 +463,7 @@ def analyze(path, api_key, models, p, progress):
             t0 = time.time()
             progress(f"{tag}: compressing video...", span(i, 0, .1), left(i, "compress"))
             seg = os.path.join(tmp, f"seg{i}.mp4")
-            cut_segment(path, start, SEGMENT_SEC, seg, g["height"])
+            cut_segment(path, start, g["segment"], seg, g["frame"])
             t0 = timed(i, "compress")
 
             progress(f"{tag}: uploading VOD to coach...", span(i, .1, .25), left(i, "upload"))
@@ -431,7 +481,7 @@ def analyze(path, api_key, models, p, progress):
                                 contents=[f, prompt(game, p, start, parts[-1]["context"] if parts else "", kits)],
                                 config=types.GenerateContentConfig(response_mime_type="application/json",
                                                                    response_schema=SegmentReport,
-                                                                   media_resolution=LOW_RES))
+                                                                   media_resolution=g["res"]))
             finally:
                 try:
                     client.files.delete(name=f.name)
@@ -448,18 +498,30 @@ def analyze(path, api_key, models, p, progress):
     contexts = [pt["context"] for pt in parts]
     moments = [m for pt in parts for m in pt["moments"]]
 
-    progress("Writing summary...", span(len(starts), 0, .15), speed["summary"])
+    progress(f"Double-checking {len(moments)} notes...", span(len(starts), 0, .15), speed["summary"])
     t0 = time.time()
+    notes = [{"i": i} | {k: m.get(k, "") for k in ("category", "situation", "what_happened", "severity", "title", "better")}
+             for i, m in enumerate(moments)]
     summary = generate(
         client, progress, models,
-        contents=f"""You coached a {g['title']} player ({g['who'](p)}) through a full match. Your notes:
-{json.dumps([{k: m[k] for k in ("category", "severity", "title", "what_happened", "better")} for m in moments])}
+        contents=f"""You coached a {g['title']} player ({g['who'](p)}) through a full match. {depth(p)}
+Before they see your notes, check every one like a pro coach checking their own review:
+- severity "good": first argue the case against the play. If it only worked because of the outcome (the enemy
+  misplayed, a coin flip, a lucky dive), it was not good: give it the severity it deserves and say what the right play was.
+  Keep "good" only if the decision was right given the situation.
+- mistakes: keep them when the situation supports them; make better the exact alternative; set severity by what it cost.
+{g.get('rules', '')}
+Your notes (i = index): {json.dumps(notes)}
 Match flow: {" | ".join(contexts)}
 {kits_text(game, kits, p, everyone=False)}
-Write an overview, the 3-5 recurring issues that cost them the most {g['summary_unit']} (with concrete drills/habits to fix them), and their strengths.""",
+Return a verdict for every note. Then write an overview, the 3 recurring mistakes that cost them the most
+{g['summary_unit']}, ranked, each with a concrete drill or habit to fix it, and the strengths that hold up.""",
         config=types.GenerateContentConfig(response_mime_type="application/json", response_schema=Summary))
     s = summary.parsed or Summary.model_validate_json(summary.text)
     save_speed({"summary": time.time() - t0})
+    verdicts = {v.i: v for v in s.verdicts}
+    moments = [m | ({k: getattr(v, k) for k in ("category", "severity", "title", "better")} if (v := verdicts.get(i)) else {})
+               for i, m in enumerate(moments)]  # re-grade only: letting it drop notes threw away real mistakes
 
     moments.sort(key=lambda m: m["seconds"])
     try:
@@ -467,7 +529,7 @@ Write an overview, the 3-5 recurring issues that cost them the most {g['summary_
     except OSError:
         pass
     return {"video": os.path.basename(path), **{k: p.get(k, "") for k in ("game", "agent", "rank", "role", "opponent")},
-            "map": map_name, "model": models[0] if models else "", **s.model_dump(), "moments": moments}
+            "map": map_name, "model": models[0] if models else "", **s.model_dump(exclude={"verdicts"}), "moments": moments}
 
 
 if __name__ == "__main__":
